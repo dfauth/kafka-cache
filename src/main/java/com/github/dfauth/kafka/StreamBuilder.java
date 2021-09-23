@@ -60,8 +60,13 @@ public class StreamBuilder<K,V> {
         return this;
     }
 
-    public StreamBuilder<K,V> withRecordConsumer(BiConsumer<K,V> recordConsumer) {
-        this.recordConsumer = r -> recordConsumer.accept(r.key(), r.value());
+    public StreamBuilder<K,V> withKeyValueConsumer(BiConsumer<K,V> keyValueConsumer) {
+        this.recordConsumer = r -> keyValueConsumer.accept(r.key(), r.value());
+        return this;
+    }
+
+    public StreamBuilder<K,V> withValueConsumer(Consumer<V> valueConsumer) {
+        this.recordConsumer = r -> valueConsumer.accept(r.value());
         return this;
     }
 

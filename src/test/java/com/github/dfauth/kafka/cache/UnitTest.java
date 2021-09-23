@@ -43,7 +43,7 @@ public class UnitTest {
                             .withValueDeserializer(new StringDeserializer())
                             .withProperties(config, Collections.singletonMap(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"))
                             .withTopic(TOPIC)
-                            .withRecordConsumer((k, v) -> {
+                            .withKeyValueConsumer((k, v) -> {
                                 cache.put(k,v);
                                 messageLatch.countDown();
                             })

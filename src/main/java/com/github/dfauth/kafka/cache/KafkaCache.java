@@ -68,7 +68,7 @@ public class KafkaCache<K, V, T, R> {
     }
 
     public void start() {
-        this.stream = this.builder.withRecordConsumer((k, v) -> {
+        this.stream = this.builder.withKeyValueConsumer((k, v) -> {
             cache.put(keyMapper.apply(k, v), valueMapper.apply(k, v));
             this.messageConsumer.accept(k, v);
         }).build();
