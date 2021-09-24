@@ -1,10 +1,6 @@
 package com.github.dfauth.kafka;
 
-import com.github.dfauth.trycatch.TryCatch;
-import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.Deserializer;
 
@@ -14,8 +10,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import static com.github.dfauth.trycatch.TryCatch.tryCatchSilentlyIgnore;
+import static java.util.function.Function.identity;
 
 public class StreamBuilder<K,V> {
 
@@ -27,6 +25,7 @@ public class StreamBuilder<K,V> {
     private Duration pollingDuration = Duration.ofMillis(50);
     private RebalanceListener<K,V> partitionRevocationListener = consumer -> topicPartitions -> {};
     private RebalanceListener<K,V> partitionAssignmentListener = consumer -> topicPartitions -> {};
+    private CommitStrategy.Factory commitStrategy = CommitStrategy.Factory.SYNC;
 
     public static <K,V> StreamBuilder<K,V> builder() {
         return new StreamBuilder();
@@ -85,8 +84,13 @@ public class StreamBuilder<K,V> {
         return this;
     }
 
+    public StreamBuilder<K, V> withCommitStrategy(CommitStrategy.Factory commitStrategy) {
+        this.commitStrategy = commitStrategy;
+        return this;
+    }
+
     public KafkaStream<K,V> build() {
-        return new KafkaStream(this.props, this.topic, this.keyDeserializer, this.valueDeserializer, this.recordConsumer, pollingDuration, partitionAssignmentListener, partitionRevocationListener);
+        return new KafkaStream(this.props, this.topic, this.keyDeserializer, this.valueDeserializer, this.recordConsumer, pollingDuration, partitionAssignmentListener, partitionRevocationListener, commitStrategy);
     }
 
     public static class KafkaStream<K,V> {
@@ -102,12 +106,14 @@ public class StreamBuilder<K,V> {
         private final Duration timeout;
         private final RebalanceListener<K,V> partitionRevocationListener;
         private final RebalanceListener<K,V> partitionAssignmentListener;
+        private final CommitStrategy.Factory commitStrategyFactory;
+        private CommitStrategy commitStrategy;
 
-        public KafkaStream(Map<String, Object> props, String topic, Deserializer<K> keyDeserializer, Deserializer<V> valueDeserializer, Consumer<ConsumerRecord<K,V>> recordConsumer, Duration duration, RebalanceListener<K,V> partitionAssignmentListener, RebalanceListener<K,V> partitionRevocationListener) {
-            this(props, topic, keyDeserializer, valueDeserializer, recordConsumer, duration, Duration.ofMillis(1000), partitionAssignmentListener, partitionRevocationListener);
+        public KafkaStream(Map<String, Object> props, String topic, Deserializer<K> keyDeserializer, Deserializer<V> valueDeserializer, Consumer<ConsumerRecord<K,V>> recordConsumer, Duration duration, RebalanceListener<K,V> partitionAssignmentListener, RebalanceListener<K,V> partitionRevocationListener, CommitStrategy.Factory commitStrategy) {
+            this(props, topic, keyDeserializer, valueDeserializer, recordConsumer, duration, Duration.ofMillis(1000), partitionAssignmentListener, partitionRevocationListener, commitStrategy);
         }
 
-        public KafkaStream(Map<String, Object> props, String topic, Deserializer<K> keyDeserializer, Deserializer<V> valueDeserializer, Consumer<ConsumerRecord<K,V>> recordConsumer, Duration duration, Duration timeout, RebalanceListener<K,V> partitionAssignmentListener, RebalanceListener<K,V> partitionRevocationListener) {
+        public KafkaStream(Map<String, Object> props, String topic, Deserializer<K> keyDeserializer, Deserializer<V> valueDeserializer, Consumer<ConsumerRecord<K,V>> recordConsumer, Duration duration, Duration timeout, RebalanceListener<K,V> partitionAssignmentListener, RebalanceListener<K,V> partitionRevocationListener, CommitStrategy.Factory commitStrategy) {
             this.props = props;
             this.topic = topic;
             this.keyDeserializer = keyDeserializer;
@@ -117,11 +123,14 @@ public class StreamBuilder<K,V> {
             this.timeout = timeout;
             this.partitionAssignmentListener = partitionAssignmentListener;
             this.partitionRevocationListener = partitionRevocationListener;
+            this.commitStrategyFactory = commitStrategy;
+            this.props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
         }
 
         public void start() {
             isRunning.set(true);
             consumer = new KafkaConsumer(props, keyDeserializer, valueDeserializer);
+            commitStrategy = commitStrategyFactory.create(consumer);
             Consumer<Collection<TopicPartition>> x = partitionRevocationListener.withKafkaConsumer(consumer);
             Consumer<Collection<TopicPartition>> y = partitionAssignmentListener.withKafkaConsumer(consumer);
             consumer.subscribe(Collections.singleton(topic), new ConsumerRebalanceListener() {
@@ -142,7 +151,7 @@ public class StreamBuilder<K,V> {
                         records.records(topic).forEach(r -> {
                             recordConsumer.accept(r);
                         });
-                        consumer.commitSync();
+                        commitStrategy.tryCommit();
                     });
                 }
                 consumer.close(timeout);
@@ -152,5 +161,10 @@ public class StreamBuilder<K,V> {
         public void stop() {
             isRunning.set(false);
         }
+
+        public CommitStrategy commitStrategy() {
+            return commitStrategy;
+        }
     }
+
 }
