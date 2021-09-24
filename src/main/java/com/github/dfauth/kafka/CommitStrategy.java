@@ -9,6 +9,7 @@ import org.apache.kafka.common.TopicPartition;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 abstract class CommitStrategy {
@@ -77,7 +78,7 @@ abstract class CommitStrategy {
 
     private static class ExternalSyncCommitStrategy extends CommitStrategy {
 
-        protected Map<TopicPartition, OffsetAndMetadata> records = new HashMap<>();
+        protected Map<TopicPartition, OffsetAndMetadata> records = new ConcurrentHashMap<>();
 
         public ExternalSyncCommitStrategy(KafkaConsumer<?, ?> consumer) {
             super(consumer);
@@ -90,6 +91,7 @@ abstract class CommitStrategy {
         @Override
         public void tryCommit() {
             consumer.commitSync(records);
+            records.clear();
         }
     }
 
@@ -102,7 +104,10 @@ abstract class CommitStrategy {
 
         @Override
         public void tryCommit() {
-            consumer.commitAsync(records, (o,e) -> Optional.ofNullable(e).ifPresent(_e -> log.error(_e.getMessage(), _e)));
+            consumer.commitAsync(records, (o,e) -> {
+                Optional.ofNullable(o).ifPresent(_o -> records.clear());
+                Optional.ofNullable(e).ifPresent(_e -> log.error(_e.getMessage(), _e));
+            });
         }
     }
 }
