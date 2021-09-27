@@ -1,22 +1,21 @@
 package com.github.dfauth.kafka.cache;
 
 import com.github.dfauth.kafka.EmbeddedKafka;
+import com.github.dfauth.kafka.KafkaSink;
+import com.github.dfauth.kafka.RebalanceListener;
+import com.github.dfauth.kafka.StreamBuilder;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
-import com.github.dfauth.kafka.KafkaSink;
-import com.github.dfauth.kafka.StreamBuilder;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Collections;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
-import static com.github.dfauth.kafka.cache.TestUtils.ignoringFunction;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
@@ -30,39 +29,34 @@ public class UnitTest {
     private static final int PARTITIONS = 1;
 
     @Test
-    public void testIt() {
-        CountDownLatch partitionAssignmentLatch = new CountDownLatch(PARTITIONS);
-        CountDownLatch messageLatch = new CountDownLatch(1);
+    public void testIt() throws ExecutionException, InterruptedException {
         Cache<String, String> cache = CacheBuilder.newBuilder().build();
-        String value = EmbeddedKafka.embeddedKafkaWithTopic(TOPIC)
+        CompletableFuture<String> value = EmbeddedKafka.embeddedKafkaWithTopic(TOPIC)
                 .withPartitions(PARTITIONS)
                 .withGroupId("blah")
-                .runTest(ignoringFunction(config -> {
+                .runAsyncTest(f -> config -> {
                     StreamBuilder.KafkaStream<String, String> stream = StreamBuilder.<String, String>builder()
                             .withKeyDeserializer(new StringDeserializer())
                             .withValueDeserializer(new StringDeserializer())
-                            .withProperties(config, Collections.singletonMap(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"))
+                            .withProperties(config)
                             .withTopic(TOPIC)
                             .withKeyValueConsumer((k, v) -> {
                                 cache.put(k,v);
-                                messageLatch.countDown();
+                                f.complete(cache.getIfPresent(k));
                             })
-                            .onPartitionAssignment(c -> tp -> tp.forEach(ignored -> partitionAssignmentLatch.countDown()))
+                            .onPartitionAssignment(RebalanceListener.seekToBeginning())
                             .build();
 
                     stream.start();
 
-                    partitionAssignmentLatch.await();
                     KafkaSink<String, String> sink = KafkaSink.newStringBuilder()
                             .withProperties(config)
                             .withTopic(TOPIC)
                             .build();
                     RecordMetadata m = sink.publish(K, V).get(1000, TimeUnit.MILLISECONDS);
                     assertNotNull(m);
-                    messageLatch.await();
-                    return cache.getIfPresent(K);
-                }));
-        assertEquals(V, value);
+                });
+        assertEquals(V, value.get());
     }
 
 }

@@ -10,10 +10,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 import static com.github.dfauth.trycatch.TryCatch.tryCatchSilentlyIgnore;
-import static java.util.function.Function.identity;
 
 public class StreamBuilder<K,V> {
 

@@ -7,12 +7,12 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import static com.github.dfauth.kafka.EmbeddedKafka.embeddedKafkaWithTopic;
 import static com.github.dfauth.kafka.RebalanceListener.seekToBeginning;
-import static com.github.dfauth.kafka.cache.TestUtils.ignoringFunction;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
@@ -26,12 +26,11 @@ public class CacheTest {
     private static final int PARTITIONS = 1;
 
     @Test
-    public void testIt() {
-        CountDownLatch latch = new CountDownLatch(1);
-        String value = embeddedKafkaWithTopic(TOPIC)
+    public void testIt() throws ExecutionException, InterruptedException {
+        CompletableFuture<String> value = embeddedKafkaWithTopic(TOPIC)
                 .withPartitions(PARTITIONS)
                 .withGroupId("blah")
-                .runTest(ignoringFunction(config -> {
+                .runAsyncTest(f -> config -> {
                     KafkaCache<String, String, String, String> cache = KafkaCache.<String, String>unmappedBuilder()
                             .withKeyDeserializer(new StringDeserializer())
                             .withValueDeserializer(new StringDeserializer())
@@ -39,7 +38,7 @@ public class CacheTest {
                             .withTopic(TOPIC)
                             .withCacheConfiguration(b -> {})
                             .onPartitionAssignment(seekToBeginning())
-                            .onMessage((k,v) -> latch.countDown())
+                            .onMessage((k,v) -> f.complete(v))
                             .build();
 
                     cache.start();
@@ -50,10 +49,8 @@ public class CacheTest {
                             .build();
                     RecordMetadata m = sink.publish(K, V).get(1000, TimeUnit.MILLISECONDS);
                     assertNotNull(m);
-                    latch.await(1000, TimeUnit.MILLISECONDS);
-                    return cache.getOptional(K).get();
-                }));
-        assertEquals(V, value);
+                });
+        assertEquals(V, value.get());
     }
 
 }
