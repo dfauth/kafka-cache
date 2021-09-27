@@ -13,7 +13,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
@@ -33,7 +32,6 @@ public class AvroCacheTest {
 
     @Test
     public void testIt() throws ExecutionException, InterruptedException {
-        CountDownLatch latch = new CountDownLatch(1);
         AvroSerialization avroSerialization = new AvroSerialization(schemaRegClient, "dummy", true);
         EnvelopeHandler<TestObject> envelopeHandler = EnvelopeHandler.of(avroSerialization);
         CompletableFuture<TestObject> value = embeddedKafkaWithTopic(TOPIC)
@@ -47,7 +45,7 @@ public class AvroCacheTest {
                             .withTopic(TOPIC)
                             .withCacheConfiguration(b -> {})
                             .onPartitionAssignment(seekToBeginning())
-                            .onMessage((k,v) -> latch.countDown())
+                            .onMessage((k,v) -> f.complete(v))
                             .build();
 
                     cache.start();
@@ -61,8 +59,6 @@ public class AvroCacheTest {
                             .build();
                     RecordMetadata m = sink.publish(testObject.getKey(), envelope).get(1000, TimeUnit.MILLISECONDS);
                     assertNotNull(m);
-                    latch.await(1000, TimeUnit.MILLISECONDS);
-                    f.complete(cache.getOptional(testObject.getKey()).get());
                 });
         assertEquals(testObject, value.get());
     }

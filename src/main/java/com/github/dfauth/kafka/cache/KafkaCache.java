@@ -22,10 +22,10 @@ public class KafkaCache<K, V, T, R> {
     private final Cache<T, R> cache;
     private final BiFunction<K, V, T> keyMapper;
     private final BiFunction<K, V, R> valueMapper;
-    private final BiConsumer<K, V> messageConsumer;
+    private final BiConsumer<T, R> messageConsumer;
     private StreamBuilder.KafkaStream<K, V> stream;
 
-    public KafkaCache(StreamBuilder<K, V> builder, Cache<T, R> cache, BiFunction<K, V, T> keyMapper, BiFunction<K, V, R> valueMapper, BiConsumer<K, V> messageConsumer, RebalanceListener<K,V> partitionAssignmentConsumer, RebalanceListener<K,V> partitionRevocationConsumer) {
+    public KafkaCache(StreamBuilder<K, V> builder, Cache<T, R> cache, BiFunction<K, V, T> keyMapper, BiFunction<K, V, R> valueMapper, BiConsumer<T, R> messageConsumer, RebalanceListener<K,V> partitionAssignmentConsumer, RebalanceListener<K,V> partitionRevocationConsumer) {
         this.builder = builder;
         this.cache = cache;
         this.keyMapper = keyMapper;
@@ -69,8 +69,10 @@ public class KafkaCache<K, V, T, R> {
 
     public void start() {
         this.stream = this.builder.withKeyValueConsumer((k, v) -> {
-            cache.put(keyMapper.apply(k, v), valueMapper.apply(k, v));
-            this.messageConsumer.accept(k, v);
+            T _k = keyMapper.apply(k, v);
+            R _v = valueMapper.apply(k, v);
+            cache.put(_k, _v);
+            this.messageConsumer.accept(_k, cache.getIfPresent(_k));
         }).build();
         this.stream.start();
     }
@@ -91,7 +93,7 @@ public class KafkaCache<K, V, T, R> {
         private BiFunction<K, V, R> valueMapper;
         private RebalanceListener<K,V> partitionAssignmentConsumer = noOp();
         private RebalanceListener<K,V> partitionRevocationConsumer = noOp();
-        private BiConsumer<K, V> messageConsumer = (k,v) -> {};
+        private BiConsumer<T, R> messageConsumer = (k,v) -> {};
 
         public KafkaCache<K, V, T, R> build() {
             return new KafkaCache<>(
@@ -150,7 +152,7 @@ public class KafkaCache<K, V, T, R> {
             return this;
         }
 
-        public Builder<K, V, T, R> onMessage(BiConsumer<K,V> consumer) {
+        public Builder<K, V, T, R> onMessage(BiConsumer<T, R> consumer) {
             this.messageConsumer = consumer;
             return this;
         }
