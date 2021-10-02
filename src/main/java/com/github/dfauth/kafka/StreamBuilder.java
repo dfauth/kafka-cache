@@ -3,6 +3,7 @@ package com.github.dfauth.kafka;
 import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.Deserializer;
+import org.apache.kafka.common.serialization.StringDeserializer;
 
 import java.time.Duration;
 import java.util.*;
@@ -24,6 +25,10 @@ public class StreamBuilder<K,V> {
     private RebalanceListener<K,V> partitionRevocationListener = consumer -> topicPartitions -> {};
     private RebalanceListener<K,V> partitionAssignmentListener = consumer -> topicPartitions -> {};
     private CommitStrategy.Factory commitStrategy = CommitStrategy.Factory.SYNC;
+
+    public static <V> StreamBuilder<String,V> stringKeyBuilder() {
+        return new StreamBuilder().withKeyDeserializer(new StringDeserializer());
+    }
 
     public static <K,V> StreamBuilder<K,V> builder() {
         return new StreamBuilder();

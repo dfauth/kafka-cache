@@ -23,6 +23,7 @@
     <spring-kafka.version>2.5.6.RELEASE</spring-kafka.version>
     <schema-registry.version>5.3.0</schema-registry.version>
     <lombok.version>1.18.20</lombok.version>
+    <reactive-streams.version>1.0.3</reactive-streams.version>
   </properties>
 
   <dependencies>
@@ -62,6 +63,11 @@
       <groupId>org.projectlombok</groupId>
       <artifactId>lombok</artifactId>
       <version>${lombok.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.reactivestreams</groupId>
+      <artifactId>reactive-streams</artifactId>
+      <version>${reactive-streams.version}</version>
     </dependency>
     <dependency>
       <groupId>com.github.dfauth</groupId>
