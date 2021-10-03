@@ -6,7 +6,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.avro.specific.SpecificRecord;
 
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 @Slf4j
 public class ActorSystem<T extends SpecificRecord> {
@@ -17,10 +16,9 @@ public class ActorSystem<T extends SpecificRecord> {
         this.dispatcher = dispatcher;
     }
 
-    public ActorSystem<T> newActor(String key, Function<ActorContext, Consumer<T>> actor) {
-        ActorContext ctx = new ActorContext() {
-        };
-        this.dispatcher.handle(key, actor.apply(ctx));
+    public ActorSystem<T> newActor(String key, ActorContextAware<Consumer<T>> actor) {
+        ActorContext ctx = () -> key;
+        this.dispatcher.handle(key, actor.withActorContext(ctx));
         return this;
     }
 }

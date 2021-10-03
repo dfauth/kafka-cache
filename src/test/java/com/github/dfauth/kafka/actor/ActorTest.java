@@ -104,16 +104,22 @@ public class ActorTest {
 
                     ActorSystem<TestObject> actorSystem = new ActorSystem(dispatcher);
 
-                    CompletableFuture<TestObject> f1 = assertionsBuilder.assertThat(_f -> assertEquals(testObject1, _f.get()));
+                    CompletableFuture<ActorInvocation<TestObject>> f1 = assertionsBuilder.assertThat(_f -> {
+                        assertEquals(testObject1, _f.get().message());
+                        assertEquals(KEY1, _f.get().context().name());
+                    });
                     actorSystem.newActor(KEY1, ctx -> v -> {
                         log.info("gotcha {} {}",KEY1, v);
-                        f1.complete(v);
+                        f1.complete(ActorInvocation.of(ctx, v));
                     });
 
-                    CompletableFuture<TestObject> f2 = assertionsBuilder.assertThat(_f -> assertEquals(testObject2, _f.get()));
+                    CompletableFuture<ActorInvocation<TestObject>> f2 = assertionsBuilder.assertThat(_f -> {
+                        assertEquals(testObject2, _f.get().message());
+                        assertEquals(KEY2, _f.get().context().name());
+                    });
                     actorSystem.newActor(KEY2, ctx -> v -> {
                         log.info("gotcha {} {}",KEY2, v);
-                        f2.complete(v);
+                        f2.complete(ActorInvocation.of(ctx, v));
                     });
 
                     KafkaSink<String, Envelope> sink = KafkaSink.<Envelope>newStringKeyBuilder()
