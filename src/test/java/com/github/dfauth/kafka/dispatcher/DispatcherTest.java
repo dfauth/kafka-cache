@@ -1,4 +1,4 @@
-package com.github.dfauth.kafka.actor;
+package com.github.dfauth.kafka.dispatcher;
 
 import com.github.dfauth.avro.AvroSerialization;
 import com.github.dfauth.avro.Envelope;
@@ -6,7 +6,6 @@ import com.github.dfauth.avro.EnvelopeHandler;
 import com.github.dfauth.avro.test.TestObject;
 import com.github.dfauth.kafka.EmbeddedKafka;
 import com.github.dfauth.kafka.KafkaSink;
-import com.github.dfauth.kafka.dispatcher.KafkaDispatcher;
 import io.confluent.kafka.schemaregistry.client.MockSchemaRegistryClient;
 import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient;
 import lombok.extern.slf4j.Slf4j;
@@ -81,7 +80,6 @@ public class DispatcherTest {
                             .withValueMapper((k,v) -> envelopeHandler.extractRecord(v))
                             .withProperties(config)
                             .withTopic(TOPIC)
-                            .withCacheConfiguration(b -> {})
                             .onPartitionAssignment(seekToBeginning())
                             .build();
 

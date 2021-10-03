@@ -1,5 +1,7 @@
 package com.github.dfauth.kafka;
 
+import com.github.dfauth.kafka.assertion.AsynchronousAssertions;
+import com.github.dfauth.kafka.assertion.AsynchronousAssertionsAware;
 import com.google.common.collect.ImmutableMap;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.slf4j.Logger;
@@ -14,6 +16,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 
 import static com.github.dfauth.kafka.CompletableFutureAware.runProvidingFuture;
+import static com.github.dfauth.kafka.assertion.AsynchronousAssertionsAware.runProvidingAsynchronousAssertions;
 import static com.github.dfauth.trycatch.TryCatch.tryCatch;
 import static com.github.dfauth.trycatch.TryCatch.tryCatchIgnore;
 
@@ -97,6 +100,19 @@ public class EmbeddedKafka {
                 terminate(broker);
                 return r;
             });
+        }
+
+        public AsynchronousAssertions runWithAssertions(AsynchronousAssertionsAware<Map<String, Object>> aware) {
+            EmbeddedKafkaBroker broker = new EmbeddedKafkaBroker(1, true, partitions, topic);
+            broker.afterPropertiesSet();
+            Map<String, Object> p = new HashMap(this.config);
+            p.putAll(ImmutableMap.of(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, broker.getBrokersAsString()));
+            AsynchronousAssertions assertions = runProvidingAsynchronousAssertions(aware).apply(p);
+            assertions.future().handle((r,e) -> {
+                terminate(broker);
+                return r;
+            });
+            return assertions;
         }
     }
 
