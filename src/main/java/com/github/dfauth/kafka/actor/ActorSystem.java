@@ -1,24 +1,135 @@
 package com.github.dfauth.kafka.actor;
 
+import com.github.dfauth.avro.AvroSerialization;
 import com.github.dfauth.avro.Envelope;
+import com.github.dfauth.avro.EnvelopeHandler;
+import com.github.dfauth.avro.actor.DirectoryRequest;
+import com.github.dfauth.avro.actor.DirectoryResponse;
+import com.github.dfauth.kafka.KafkaSink;
 import com.github.dfauth.kafka.dispatcher.KafkaDispatcher;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.avro.specific.SpecificRecord;
 
+import java.util.Collections;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
+
+import static com.github.dfauth.avro.EnvelopeHandler.recast;
+import static com.github.dfauth.kafka.RebalanceListener.seekToBeginning;
+import static java.util.concurrent.CompletableFuture.completedFuture;
 
 @Slf4j
 public class ActorSystem<T extends SpecificRecord> {
 
-    private final KafkaDispatcher<String, Envelope, String, T> dispatcher;
+    private final KafkaDispatcher<String, Envelope, String, ActorEnvelope<SpecificRecord>> dispatcher;
+    private final KafkaSink<String, Envelope> sink;
+    private final EnvelopeHandler<T> envelopeHandler;
 
-    public ActorSystem(KafkaDispatcher<String, Envelope, String, T> dispatcher) {
-        this.dispatcher = dispatcher;
+    public ActorSystem(Map<String, Object> config, AvroSerialization avroSerialization, String topic) {
+        this.envelopeHandler = EnvelopeHandler.of(avroSerialization);
+
+        this.dispatcher = KafkaDispatcher.<Envelope, ActorEnvelope<SpecificRecord>>unmappedStringKeyBuilder()
+                .withValueDeserializer(avroSerialization.envelopeDeserializer())
+                .withValueMapper((k,v) -> envelopeHandler.extractRecord(v, ActorEnvelope::of))
+                .withProperties(config)
+                .withTopic(topic)
+                .withCacheConfiguration(b -> {})
+                .onPartitionAssignment(seekToBeginning())
+                .build();
+
+        dispatcher.start();
+
+        this.sink = KafkaSink.<Envelope>newStringKeyBuilder()
+                .withValueSerializer(avroSerialization.envelopeSerializer())
+                .withProperties(config)
+                .withTopic(topic)
+                .build();
     }
 
-    public ActorSystem<T> newActor(String key, ActorContextAware<Consumer<T>> actor) {
-        ActorContext ctx = () -> key;
-        this.dispatcher.handle(key, actor.withActorContext(ctx));
+    public ActorSystem<T> newActor(String key, ActorContextAware<Consumer<ActorEnvelope<SpecificRecord>>> actor) {
+        ActorContext ctx = new ActorContext() {
+            @Override
+            public String name() {
+                return key;
+            }
+
+            @Override
+            public ActorRef<DirectoryRequest> directory() {
+                return new ActorRef<>() {
+                    @Override
+                    public void tell(DirectoryRequest r) {
+                        throw new UnsupportedOperationException("directory can only respond, you must use ask");
+                    }
+
+                    @Override
+                    public String name() {
+                        return "directory";
+                    }
+
+                    @Override
+                    public CompletableFuture<DirectoryResponse> ask(DirectoryRequest r) {
+                        // currently only support lookup by name
+                        return completedFuture(DirectoryResponse.newBuilder().setName(r.getName()).build());
+                    }
+                };
+            }
+
+            @Override
+            public <R extends SpecificRecord> ActorRef<R> actorRef(String key) {
+                ActorContext ctx = this;
+                return new ActorRef<>() {
+                    @Override
+                    public void tell(R r) {
+                        sink.publish(key, recast(envelopeHandler).envelope(r, Collections.singletonMap("SENDER",ctx.name())));
+                    }
+
+                    @Override
+                    public <U extends SpecificRecord> CompletableFuture<U> ask(R r) {
+                        String newKey = anonymise(ctx.name());
+                        CompletableFuture<U> f = new CompletableFuture<>();
+                        ActorRef<U> tmp = spawn(newKey, x ->
+                                f.complete(x));
+                        sink.publish(key, recast(envelopeHandler).envelope(r, Collections.singletonMap("SENDER", tmp.name())));
+                        return f;
+                    }
+
+                    @Override
+                    public String name() {
+                        return key;
+                    }
+                };
+            }
+
+            @Override
+            public <R extends SpecificRecord> ActorRef<R> spawn(String name, Consumer<R> consumer, Map<String, Object> config) {
+                Consumer<ActorEnvelope<SpecificRecord>> x = e -> consumer.accept((R) e.payload());
+                ActorSystem.this.dispatcher.handle(name, x);
+                return new ActorRef<>() {
+                    @Override
+                    public void tell(R r) {
+                        throw new UnsupportedOperationException("anonymous actor cannot be sent message using this actor ref");
+                    }
+
+                    @Override
+                    public <U extends SpecificRecord> CompletableFuture<U> ask(R r) {
+                        throw new UnsupportedOperationException("anonymous actor cannot be sent message using this actor ref");
+                    }
+
+                    @Override
+                    public String name() {
+                        return name;
+                    }
+                };
+            }
+        };
+        Consumer<ActorEnvelope<SpecificRecord>> x = actor.withActorContext(ctx);
+        this.dispatcher.handle(key, x);
         return this;
+    }
+
+    private String anonymise(String key) {
+        return String.format("%s/%s",key,UUID.randomUUID().toString().substring(16));
     }
 }

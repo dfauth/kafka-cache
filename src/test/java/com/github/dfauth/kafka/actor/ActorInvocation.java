@@ -5,7 +5,7 @@ public interface ActorInvocation<T> {
     ActorContext context();
     T message();
 
-    static <T> ActorInvocation<T> of(ActorContext ctx, T t) {
+    static <T> ActorInvocation<T> of(ActorContext ctx, ActorEnvelope<T> t) {
         return new ActorInvocation<T>() {
             @Override
             public ActorContext context() {
@@ -14,7 +14,7 @@ public interface ActorInvocation<T> {
 
             @Override
             public T message() {
-                return t;
+                return t.payload();
             }
         };
     }

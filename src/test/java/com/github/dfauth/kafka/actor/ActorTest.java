@@ -8,7 +8,6 @@ import com.github.dfauth.kafka.EmbeddedKafka;
 import com.github.dfauth.kafka.KafkaSink;
 import com.github.dfauth.kafka.assertion.Assertions;
 import com.github.dfauth.kafka.assertion.AsynchronousAssertions;
-import com.github.dfauth.kafka.dispatcher.KafkaDispatcher;
 import io.confluent.kafka.schemaregistry.client.MockSchemaRegistryClient;
 import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient;
 import lombok.extern.slf4j.Slf4j;
@@ -18,7 +17,7 @@ import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-import static com.github.dfauth.kafka.RebalanceListener.seekToBeginning;
+import static com.github.dfauth.kafka.utils.CompletableFutureUtils.asConsumerHandler;
 import static junit.framework.TestCase.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -47,34 +46,24 @@ public class ActorTest {
                     CompletableFuture<TestObject> f1 = assertions.assertThat(_f -> assertEquals(testObject1, _f.get()));
                     CompletableFuture<TestObject> f2 = assertions.assertThat(_f -> assertEquals(testObject2, _f.get()));
                     assertions.build(f);
-                    KafkaDispatcher<String, Envelope, String, TestObject> dispatcher = KafkaDispatcher.<Envelope, TestObject>unmappedStringKeyBuilder()
-                            .withValueDeserializer(avroSerialization.envelopeDeserializer())
-                            .withValueMapper((k,v) -> envelopeHandler.extractRecord(v))
-                            .withProperties(config)
-                            .withTopic(TOPIC)
-                            .withCacheConfiguration(b -> {})
-                            .onPartitionAssignment(seekToBeginning())
-                            .build();
-
-                    dispatcher.start();
-
-                    ActorSystem<TestObject> actorSystem = new ActorSystem(dispatcher);
-
-                    actorSystem.newActor(KEY1, ctx -> v -> {
-                        log.info("gotcha {} {}",KEY1, v);
-                        f1.complete(v);
-                    });
-
-                    actorSystem.newActor(KEY2, ctx -> v -> {
-                        log.info("gotcha {} {}",KEY2, v);
-                        f2.complete(v);
-                    });
 
                     KafkaSink<String, Envelope> sink = KafkaSink.<Envelope>newStringKeyBuilder()
                             .withValueSerializer(avroSerialization.envelopeSerializer())
                             .withProperties(config)
                             .withTopic(TOPIC)
                             .build();
+                    ActorSystem<TestObject> actorSystem = new ActorSystem(config, avroSerialization, TOPIC);
+
+                    actorSystem.newActor(KEY1, ctx -> v -> {
+                        log.info("gotcha {} {}",KEY1, v);
+                        f1.complete((TestObject) v.payload());
+                    });
+
+                    actorSystem.newActor(KEY2, ctx -> v -> {
+                        log.info("gotcha {} {}",KEY2, v);
+                        f2.complete((TestObject) v.payload());
+                    });
+
                     assertNotNull(sink.publish(KEY1, envelopeHandler.envelope(testObject1)).get(1000, TimeUnit.MILLISECONDS));
                     assertNotNull(sink.publish(KEY2, envelopeHandler.envelope(testObject2)).get(1000, TimeUnit.MILLISECONDS));
                 });
@@ -91,18 +80,14 @@ public class ActorTest {
                 .withPartitions(PARTITIONS)
                 .withGroupId("god")
                 .runWithAssertions(assertionsBuilder -> config -> {
-                    KafkaDispatcher<String, Envelope, String, TestObject> dispatcher = KafkaDispatcher.<Envelope, TestObject>unmappedStringKeyBuilder()
-                            .withValueDeserializer(avroSerialization.envelopeDeserializer())
-                            .withValueMapper((k,v) -> envelopeHandler.extractRecord(v))
+
+                    KafkaSink<String, Envelope> sink = KafkaSink.<Envelope>newStringKeyBuilder()
+                            .withValueSerializer(avroSerialization.envelopeSerializer())
                             .withProperties(config)
                             .withTopic(TOPIC)
-                            .withCacheConfiguration(b -> {})
-                            .onPartitionAssignment(seekToBeginning())
                             .build();
 
-                    dispatcher.start();
-
-                    ActorSystem<TestObject> actorSystem = new ActorSystem(dispatcher);
+                    ActorSystem<TestObject> actorSystem = new ActorSystem(config, avroSerialization, TOPIC);
 
                     CompletableFuture<ActorInvocation<TestObject>> f1 = assertionsBuilder.assertThat(_f -> {
                         assertEquals(testObject1, _f.get().message());
@@ -110,7 +95,7 @@ public class ActorTest {
                     });
                     actorSystem.newActor(KEY1, ctx -> v -> {
                         log.info("gotcha {} {}",KEY1, v);
-                        f1.complete(ActorInvocation.of(ctx, v));
+                        f1.complete(ActorInvocation.of(ctx, ActorEnvelope.of((TestObject) v.payload(), v.metadata())));
                     });
 
                     CompletableFuture<ActorInvocation<TestObject>> f2 = assertionsBuilder.assertThat(_f -> {
@@ -119,14 +104,57 @@ public class ActorTest {
                     });
                     actorSystem.newActor(KEY2, ctx -> v -> {
                         log.info("gotcha {} {}",KEY2, v);
-                        f2.complete(ActorInvocation.of(ctx, v));
+                        f2.complete(ActorInvocation.of(ctx, ActorEnvelope.of((TestObject) v.payload(), v.metadata())));
                     });
+
+                    assertNotNull(sink.publish(KEY1, envelopeHandler.envelope(testObject1)).get(1000, TimeUnit.MILLISECONDS));
+                    assertNotNull(sink.publish(KEY2, envelopeHandler.envelope(testObject2)).get(1000, TimeUnit.MILLISECONDS));
+                });
+        assertTrue(assertions.performAssertionsWaitingAtMost(Duration.ofMillis(7000)));
+    }
+
+    @Test
+    public void testAsk() throws Exception {
+
+        AvroSerialization avroSerialization = new AvroSerialization(schemaRegClient, "dummy", true);
+        EnvelopeHandler<TestObject> envelopeHandler = EnvelopeHandler.of(avroSerialization);
+        AsynchronousAssertions assertions = EmbeddedKafka.embeddedKafkaWithTopic(TOPIC)
+                .withPartitions(PARTITIONS)
+                .withGroupId("god")
+                .runWithAssertions(assertionsBuilder -> config -> {
 
                     KafkaSink<String, Envelope> sink = KafkaSink.<Envelope>newStringKeyBuilder()
                             .withValueSerializer(avroSerialization.envelopeSerializer())
                             .withProperties(config)
                             .withTopic(TOPIC)
                             .build();
+
+                    ActorSystem<TestObject> actorSystem = new ActorSystem(config, avroSerialization, TOPIC);
+
+                    CompletableFuture<ActorInvocation<TestObject>> f1 = assertionsBuilder.assertThat(_f -> {
+                        assertEquals(testObject1, _f.get().message());
+                        assertEquals(KEY1, _f.get().context().name());
+                    });
+                    CompletableFuture<TestObject> f3 = assertionsBuilder.assertThat(_f -> {
+                        assertEquals(testObject2, _f.get());
+                    });
+                    actorSystem.newActor(KEY1, ctx -> v -> {
+                        log.info("gotcha {} {}",KEY1, v);
+                        f1.complete(ActorInvocation.of(ctx, ActorEnvelope.of((TestObject) v.payload(), v.metadata())));
+                        if(testObject1.equals(v.payload())) {
+                            ctx.actorRef(KEY2).<TestObject>ask(testObject1)
+                                    .handle(asConsumerHandler(o ->
+                                            f3.complete(o)
+                                    ));
+                        }
+                    });
+
+                    actorSystem.newActor(KEY2, ctx -> v -> {
+                        if(testObject1.equals(v.payload())) {
+                            ctx.sender(v).ifPresent(ref -> ref.tell(testObject2));
+                        }
+                    });
+
                     assertNotNull(sink.publish(KEY1, envelopeHandler.envelope(testObject1)).get(1000, TimeUnit.MILLISECONDS));
                     assertNotNull(sink.publish(KEY2, envelopeHandler.envelope(testObject2)).get(1000, TimeUnit.MILLISECONDS));
                 });
