@@ -103,7 +103,10 @@ public class KafkaDispatcher<K, V, T, R> {
             public void request(long l) {}
 
             @Override
-            public void cancel() {}
+            public void cancel() {
+                cache.invalidate(t);
+                subscriber.onComplete();
+            }
         });
     }
 

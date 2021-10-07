@@ -1,6 +1,8 @@
 package com.github.dfauth.kafka.actor;
 
+import com.github.dfauth.kafka.utils.BaseSubscriber;
 import org.apache.avro.specific.SpecificRecord;
+import org.reactivestreams.Subscriber;
 
 import java.util.Collections;
 import java.util.Map;
@@ -23,5 +25,23 @@ public interface ActorContext {
         return spawn(name, consumer, Collections.emptyMap());
     }
 
-    <T extends SpecificRecord> ActorRef<T> spawn(String name, Consumer<T> consumer, Map<String, Object> config);
+    default <T extends SpecificRecord> ActorRef<T> spawn(String name, Consumer<T> consumer, Map<String, Object> config) {
+        ActorContextAware<Subscriber<T>> subscriber = _ignored -> new BaseSubscriber<>(){
+            @Override
+            public void onNext(T t) {
+                consumer.accept(t);
+            }
+        };
+        return spawn(name, subscriber, config);
+    }
+
+    default <T extends SpecificRecord> ActorRef<T> spawn(String name, Subscriber<T> subscriber) {
+        return spawn(name, _ignored -> subscriber, Collections.emptyMap());
+    }
+
+    default <T extends SpecificRecord> ActorRef<T> spawn(String name, ActorContextAware<Subscriber<T>> subscriber) {
+        return spawn(name, subscriber, Collections.emptyMap());
+    }
+
+    <T extends SpecificRecord> ActorRef<T> spawn(String name, ActorContextAware<Subscriber<T>> subscriber, Map<String, Object> config);
 }

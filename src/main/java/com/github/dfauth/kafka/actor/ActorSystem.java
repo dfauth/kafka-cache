@@ -7,8 +7,11 @@ import com.github.dfauth.avro.actor.DirectoryRequest;
 import com.github.dfauth.avro.actor.DirectoryResponse;
 import com.github.dfauth.kafka.KafkaSink;
 import com.github.dfauth.kafka.dispatcher.KafkaDispatcher;
+import com.github.dfauth.kafka.utils.BaseSubscriber;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.avro.specific.SpecificRecord;
+import org.reactivestreams.Subscriber;
+import org.reactivestreams.Subscription;
 
 import java.util.Collections;
 import java.util.Map;
@@ -18,6 +21,7 @@ import java.util.function.Consumer;
 
 import static com.github.dfauth.avro.EnvelopeHandler.recast;
 import static com.github.dfauth.kafka.RebalanceListener.seekToBeginning;
+import static com.github.dfauth.kafka.utils.BaseSubscriber.oneTimeConsumer;
 import static java.util.concurrent.CompletableFuture.completedFuture;
 
 @Slf4j
@@ -89,8 +93,7 @@ public class ActorSystem<T extends SpecificRecord> {
                     public <U extends SpecificRecord> CompletableFuture<U> ask(R r) {
                         String newKey = anonymise(ctx.name());
                         CompletableFuture<U> f = new CompletableFuture<>();
-                        ActorRef<U> tmp = spawn(newKey, x ->
-                                f.complete(x));
+                        ActorRef<U> tmp = spawn(newKey, oneTimeConsumer(x -> f.complete(x)));
                         sink.publish(key, recast(envelopeHandler).envelope(r, Collections.singletonMap("SENDER", tmp.name())));
                         return f;
                     }
@@ -103,8 +106,22 @@ public class ActorSystem<T extends SpecificRecord> {
             }
 
             @Override
-            public <R extends SpecificRecord> ActorRef<R> spawn(String name, Consumer<R> consumer, Map<String, Object> config) {
-                Consumer<ActorEnvelope<SpecificRecord>> x = e -> consumer.accept((R) e.payload());
+            public <R extends SpecificRecord> ActorRef<R> spawn(String name, ActorContextAware<Subscriber<R>> subscriber, Map<String, Object> config) {
+                Subscriber<R> s = subscriber.withActorContext(this);
+                Subscriber<ActorEnvelope<SpecificRecord>> x = new BaseSubscriber<>() {
+
+                    @Override
+                    public void onSubscribe(Subscription subscription) {
+                        super.onSubscribe(subscription);
+                        s.onSubscribe(subscription);
+                    }
+
+                    @Override
+                    public void onNext(ActorEnvelope<SpecificRecord> t) {
+                        s.onNext((R) t.payload());
+                    }
+                };
+
                 ActorSystem.this.dispatcher.handle(name, x);
                 return new ActorRef<>() {
                     @Override

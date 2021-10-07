@@ -9,6 +9,10 @@ public interface ActorEnvelope<T> {
         return of(t, Collections.singletonMap("SENDER", sender));
     }
 
+    static <T> ActorEnvelope<T> of(T t) {
+        return of(t, Collections.emptyMap());
+    }
+
     static <T> ActorEnvelope<T> of(T t, Map<String, String> metadata) {
         return new ActorEnvelope<T>() {
             @Override
