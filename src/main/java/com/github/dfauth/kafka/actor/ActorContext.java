@@ -16,7 +16,7 @@ public interface ActorContext {
     <T extends SpecificRecord> ActorRef<T> directory();
 
     default <T extends SpecificRecord> Optional<ActorRef<T>> sender(ActorEnvelope<T> e) {
-        return Optional.ofNullable(e.metadata().get("SENDER")).map(v -> actorRef(v));
+        return Optional.ofNullable(e.metadata().get("SENDER")).map(v -> actorRef(v.toString()));
     }
 
     <T extends SpecificRecord> ActorRef<T> actorRef(String key);

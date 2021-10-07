@@ -2,8 +2,10 @@ package com.github.dfauth.kafka.dispatcher;
 
 import com.github.dfauth.kafka.RebalanceListener;
 import com.github.dfauth.kafka.StreamBuilder;
+import com.github.dfauth.kafka.utils.BaseSubscriber;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.reactivestreams.Subscriber;
@@ -14,6 +16,7 @@ import java.util.Optional;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import static com.github.dfauth.kafka.RebalanceListener.noOp;
 
@@ -22,15 +25,15 @@ public class KafkaDispatcher<K, V, T, R> {
     private final StreamBuilder<K, V> builder;
     private final Cache<T, Subscriber<R>> cache;
     private final BiFunction<K, V, T> keyMapper;
-    private final BiFunction<K, V, R> valueMapper;
+    private final Function<ConsumerRecord<K, V>, R> recordMapper;
     private final BiConsumer<T, Subscriber<R>> messageConsumer;
     private StreamBuilder.KafkaStream<K, V> stream;
 
-    public KafkaDispatcher(StreamBuilder<K, V> builder, Cache<T, Subscriber<R>> cache, BiFunction<K, V, T> keyMapper, BiFunction<K, V, R> valueMapper, BiConsumer<T, Subscriber<R>> messageConsumer, RebalanceListener<K,V> partitionAssignmentConsumer, RebalanceListener<K,V> partitionRevocationConsumer) {
+    public KafkaDispatcher(StreamBuilder<K, V> builder, Cache<T, Subscriber<R>> cache, BiFunction<K, V, T> keyMapper, Function<ConsumerRecord<K, V>, R> recordMapper, BiConsumer<T, Subscriber<R>> messageConsumer, RebalanceListener<K,V> partitionAssignmentConsumer, RebalanceListener<K,V> partitionRevocationConsumer) {
         this.builder = builder;
         this.cache = cache;
         this.keyMapper = keyMapper;
-        this.valueMapper = valueMapper;
+        this.recordMapper = recordMapper;
         this.messageConsumer = messageConsumer;
         this.builder.onPartitionAssignment(partitionAssignmentConsumer);
         this.builder.onPartitionRevocation(partitionRevocationConsumer);
@@ -63,9 +66,9 @@ public class KafkaDispatcher<K, V, T, R> {
     }
 
     public void start() {
-        this.stream = this.builder.withKeyValueConsumer((k, v) -> {
-            T _k = keyMapper.apply(k, v);
-            R _v = valueMapper.apply(k, v);
+        this.stream = this.builder.withRecordConsumer(r -> {
+            T _k = keyMapper.apply(r.key(), r.value());
+            R _v = recordMapper.apply(r);
             Optional.ofNullable(cache.getIfPresent(_k)).ifPresent(_s -> _s.onNext(_v));
             this.messageConsumer.accept(_k, cache.getIfPresent(_k));
         }).build();
@@ -77,22 +80,11 @@ public class KafkaDispatcher<K, V, T, R> {
     }
 
     public void handle(T t, Consumer<R> consumer) {
-        handle(t, new Subscriber<R>() {
-            @Override
-            public void onSubscribe(Subscription subscription) {
-                subscription.request(Long.MAX_VALUE);
-            }
-
+        handle(t, new BaseSubscriber<>() {
             @Override
             public void onNext(R r) {
                 consumer.accept(r);
             }
-
-            @Override
-            public void onError(Throwable throwable) {}
-
-            @Override
-            public void onComplete() {}
         });
     }
 
@@ -115,7 +107,7 @@ public class KafkaDispatcher<K, V, T, R> {
         private StreamBuilder<K, V> streamBuilder = StreamBuilder.builder();
         private final CacheBuilder<Object, Object> cacheBuilder = CacheBuilder.newBuilder();
         private BiFunction<K, V, T> keyMapper;
-        private BiFunction<K, V, R> valueMapper;
+        private Function<ConsumerRecord<K, V>, R> recordMapper;
         private RebalanceListener<K,V> partitionAssignmentConsumer = noOp();
         private RebalanceListener<K,V> partitionRevocationConsumer = noOp();
         private BiConsumer<T, Subscriber<R>> messageConsumer = (k,v) -> {};
@@ -125,7 +117,7 @@ public class KafkaDispatcher<K, V, T, R> {
                     streamBuilder,
                     cacheBuilder.build(),
                     keyMapper,
-                    valueMapper,
+                    recordMapper,
                     messageConsumer,
                     partitionAssignmentConsumer,
                     partitionRevocationConsumer
@@ -163,7 +155,12 @@ public class KafkaDispatcher<K, V, T, R> {
         }
 
         public Builder<K, V, T, R> withValueMapper(BiFunction<K,V,R> valueMapper) {
-            this.valueMapper = valueMapper;
+            this.recordMapper = r -> valueMapper.apply(r.key(), r.value());
+            return this;
+        }
+
+        public Builder<K, V, T, R> withRecordMapper(Function<ConsumerRecord<K, V>, R> recordMapper) {
+            this.recordMapper = recordMapper;
             return this;
         }
 

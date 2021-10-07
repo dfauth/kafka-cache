@@ -13,21 +13,21 @@ public interface ActorEnvelope<T> {
         return of(t, Collections.emptyMap());
     }
 
-    static <T> ActorEnvelope<T> of(T t, Map<String, String> metadata) {
-        return new ActorEnvelope<T>() {
+    static <T> ActorEnvelope<T> of(T t, Map<String, Object> metadata) {
+        return new ActorEnvelope<>() {
             @Override
             public T payload() {
                 return t;
             }
 
             @Override
-            public Map<String, String> metadata() {
+            public Map<String, Object> metadata() {
                 return metadata;
             }
         };
     }
 
-    default Map<String, String> metadata() {
+    default Map<String, Object> metadata() {
         return Collections.emptyMap();
     }
 

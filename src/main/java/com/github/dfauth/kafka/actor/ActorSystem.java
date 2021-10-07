@@ -18,6 +18,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static com.github.dfauth.avro.EnvelopeHandler.recast;
 import static com.github.dfauth.kafka.RebalanceListener.seekToBeginning;
@@ -36,7 +38,7 @@ public class ActorSystem<T extends SpecificRecord> {
 
         this.dispatcher = KafkaDispatcher.<Envelope, ActorEnvelope<SpecificRecord>>unmappedStringKeyBuilder()
                 .withValueDeserializer(avroSerialization.envelopeDeserializer())
-                .withValueMapper((k,v) -> envelopeHandler.extractRecord(v, ActorEnvelope::of))
+                .withRecordMapper(r -> envelopeHandler.extractRecord(r.value(), (t,h) -> ActorEnvelope.of(t, Stream.<Map.Entry<String, Object>>concat(h.entrySet().stream(), Map.<String, Object>of("topic", r.topic(), "partition", r.partition(), "offset", r.offset()).entrySet().stream()).collect(Collectors.<Map.Entry<String, Object>,String, Object>toMap(e -> e.getKey(), e -> e.getValue())))))
                 .withProperties(config)
                 .withTopic(topic)
                 .withCacheConfiguration(b -> {})

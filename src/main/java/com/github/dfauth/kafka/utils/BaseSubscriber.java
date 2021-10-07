@@ -29,10 +29,6 @@ public abstract class BaseSubscriber<T> implements Subscriber<T> {
     }
 
     @Override
-    public void onNext(T t) {
-    }
-
-    @Override
     public void onError(Throwable throwable) {
     }
 
