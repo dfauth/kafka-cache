@@ -6,6 +6,9 @@ import com.github.dfauth.avro.EnvelopeHandler;
 import com.github.dfauth.avro.actor.DirectoryRequest;
 import com.github.dfauth.avro.actor.DirectoryResponse;
 import com.github.dfauth.kafka.KafkaSink;
+import com.github.dfauth.kafka.RebalanceListener;
+import com.github.dfauth.kafka.ReplayMonitor;
+import com.github.dfauth.kafka.TopicPartitionAware;
 import com.github.dfauth.kafka.dispatcher.KafkaDispatcher;
 import com.github.dfauth.kafka.utils.BaseSubscriber;
 import lombok.extern.slf4j.Slf4j;
@@ -17,13 +20,16 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.github.dfauth.avro.EnvelopeHandler.recast;
 import static com.github.dfauth.kafka.RebalanceListener.seekToBeginning;
+import static com.github.dfauth.kafka.TopicPartitionOffset.replayMonitor;
 import static com.github.dfauth.kafka.utils.BaseSubscriber.oneTimeConsumer;
+import static com.github.dfauth.trycatch.TryCatchBuilder.tryCatch;
 import static java.util.concurrent.CompletableFuture.completedFuture;
 
 @Slf4j
@@ -32,9 +38,13 @@ public class ActorSystem<T extends SpecificRecord> {
     private final KafkaDispatcher<String, Envelope, String, ActorEnvelope<SpecificRecord>> dispatcher;
     private final KafkaSink<String, Envelope> sink;
     private final EnvelopeHandler<T> envelopeHandler;
+    private final CompletableFuture<TopicPartitionAware<ReplayMonitor>> f = new CompletableFuture<>();
+    private TopicPartitionAware<ReplayMonitor> fn = null;
 
     public ActorSystem(Map<String, Object> config, AvroSerialization avroSerialization, String topic) {
         this.envelopeHandler = EnvelopeHandler.of(avroSerialization);
+
+        CompletableFuture<TopicPartitionAware<ReplayMonitor>> f = new CompletableFuture<>();
 
         this.dispatcher = KafkaDispatcher.<Envelope, ActorEnvelope<SpecificRecord>>unmappedStringKeyBuilder()
                 .withValueDeserializer(avroSerialization.envelopeDeserializer())
@@ -42,10 +52,15 @@ public class ActorSystem<T extends SpecificRecord> {
                 .withProperties(config)
                 .withTopic(topic)
                 .withCacheConfiguration(b -> {})
-                .onPartitionAssignment(seekToBeginning())
+                .onPartitionAssignment(RebalanceListener.<String,Envelope>offsetsFuture(tpm -> f.complete(replayMonitor(tpm))).andThen(seekToBeginning()))
                 .build();
 
         dispatcher.start();
+
+        // block on the future that will return when partitions are assigned
+        fn = tryCatch(() -> {
+            return f.get(1000, TimeUnit.MILLISECONDS);
+        }).reThrowAndRun();
 
         this.sink = KafkaSink.<Envelope>newStringKeyBuilder()
                 .withValueSerializer(avroSerialization.envelopeSerializer())
@@ -59,6 +74,11 @@ public class ActorSystem<T extends SpecificRecord> {
             @Override
             public String name() {
                 return key;
+            }
+
+            @Override
+            public boolean isRecovery(ActorEnvelope e) {
+                return fn.withTopicPartition((String) e.metadata().get("topic"), (int)e.metadata().get("partition")).isReplay((long)e.metadata().get("offset"));
             }
 
             @Override

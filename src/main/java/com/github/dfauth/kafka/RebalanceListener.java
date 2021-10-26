@@ -9,18 +9,34 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+import static com.github.dfauth.trycatch.TryCatchBuilder.tryCatch;
 import static java.util.function.Function.identity;
 
 public interface RebalanceListener<K,V> extends KafkaConsumerAware<Consumer<Collection<TopicPartition>>, K,V>{
 
-    static <K,V> RebalanceListener<K,V> seekToBeginning() {
+    default RebalanceListener<K,V> compose(RebalanceListener<K,V> nested) {
+        return c -> tps -> {
+            tryCatch(() -> nested.withKafkaConsumer(c).accept(tps))
+            .ignoreSilently()
+            .andFinallyRun(() -> withKafkaConsumer(c).accept(tps));
+        };
+    }
+
+    default RebalanceListener<K,V> andThen(RebalanceListener<K,V> following) {
+        return following.compose(this);
+    }
+
+    static <K,V> RebalanceListener<K,V> offsetsFuture(Consumer<Map<TopicPartition,Long>> consumer) {
         return c -> tps ->
-            c.beginningOffsets(tps).forEach((tp, o) -> c.seek(tp, o));
+            consumer.accept(tps.stream().collect(Collectors.toMap(identity(), c::position)));
+    }
+
+    static <K,V> RebalanceListener<K,V> seekToBeginning() {
+        return c -> tps -> c.seekToBeginning(tps);
     }
 
     static <K,V> RebalanceListener<K,V> seekToEnd() {
-        return c -> tps ->
-            c.endOffsets(tps).forEach((tp, o) -> c.seek(tp, o));
+        return c -> tps -> c.seekToEnd(tps);
     }
 
     static <K,V> RebalanceListener<K,V> seekToTimestamp(ZonedDateTime t) {

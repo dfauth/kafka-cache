@@ -13,6 +13,8 @@ public interface ActorContext {
 
     String name();
 
+    boolean isRecovery(ActorEnvelope e);
+
     <T extends SpecificRecord> ActorRef<T> directory();
 
     default <T extends SpecificRecord> Optional<ActorRef<T>> sender(ActorEnvelope<T> e) {
